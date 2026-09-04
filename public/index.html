@@ -208,6 +208,8 @@ select.filter{
 table.data-table{width:100%;border-collapse:collapse;font-size:13px;}
 table.data-table th{text-align:left;color:var(--red);text-transform:uppercase;font-size:11px;letter-spacing:0.04em;padding:9px 8px;border-bottom:1px solid var(--line);}
 table.data-table td{padding:9px 8px;border-bottom:1px solid var(--line);color:var(--white);}
+table.data-table tr.ins-row{cursor:pointer;}
+table.data-table tr.ins-row:hover{background:rgba(255,255,255,0.04);}
 table.data-table tr:hover td{background:rgba(255,255,255,0.02);}
 
 /* ---------- ATTENDANCE ---------- */
@@ -365,6 +367,7 @@ let state = {
   photoDraft: null,
   selectMode: false,
   selectedIds: [],
+  rappelSelected: [],
   toast: null
 };
 
@@ -387,6 +390,8 @@ function emptyCotisations(){
   return o;
 }
 
+let dataLoadedOk = false;
+
 async function loadData(){
   try{
     const res = await fetch('/api/data');
@@ -397,16 +402,24 @@ async function loadData(){
         if(!state.data.settings.numGroups) state.data.settings.numGroups = 4;
         if(!state.data.archives) state.data.archives = [];
       }
+      dataLoadedOk = true;
+    } else {
+      dataLoadedOk = false;
     }
   }catch(e){
-    // pas encore de données -> on démarre avec une base vide
+    dataLoadedOk = false;
   }
   state.loading = false;
+  state.loadError = !dataLoadedOk;
   render();
 }
 
 let saveTimer = null;
 function saveData(){
+  if(!dataLoadedOk){
+    alert("⚠️ Enregistrement bloqué : les données n'ont pas pu être chargées correctement au démarrage (connexion instable ou serveur qui redémarre). Pour éviter d'effacer les données déjà enregistrées, rien n'a été envoyé.\n\nRechargez complètement la page (tirez vers le bas ou appuyez sur Actualiser) et réessayez.");
+    return;
+  }
   clearTimeout(saveTimer);
   saveTimer = setTimeout(async ()=>{
     try{
@@ -508,6 +521,19 @@ function render(){
     root.innerHTML = `<div class="login-wrap"><div style="color:var(--muted)">Chargement…</div></div>`;
     return;
   }
+  if(state.loadError){
+    root.innerHTML = `<div class="login-wrap"><div class="login-card" style="max-width:420px;">
+      <div style="font-size:40px;">⚠️</div>
+      <div class="club-name" style="color:#ff6b6b;">Échec du chargement des données</div>
+      <div style="color:var(--muted);font-size:13px;margin-top:10px;line-height:1.6;">
+        Impossible de récupérer les données du club depuis le serveur (connexion instable, ou le serveur redémarre après une période d'inactivité).<br><br>
+        <b>Ne rien modifier ni enregistrer maintenant</b> — cela pourrait effacer les données déjà enregistrées.
+        Rechargez la page et réessayez.
+      </div>
+      <button class="btn small" style="margin-top:16px;" onclick="location.reload()">🔄 Recharger la page</button>
+    </div></div>`;
+    return;
+  }
   if(!state.role){
     root.innerHTML = renderLogin();
   } else if(state.role==='coach-pending'){
@@ -554,6 +580,7 @@ function renderApp(){
   const tabs = [
     {key:'lutteurs', label:'Athlètes'},
     {key:'cotisations', label:'Cotisations'},
+    {key:'rappels', label:'Rappels'},
     {key:'assurance', label:'Assurance'},
     {key:'presences', label:'Présences'},
   ];
@@ -615,6 +642,7 @@ function getGroupOptions(){
 function renderTabContent(){
   if(state.activeTab==='lutteurs') return renderLutteursTab();
   if(state.activeTab==='cotisations') return renderCotisationsTab();
+  if(state.activeTab==='rappels') return renderRappelsTab();
   if(state.activeTab==='assurance') return renderAssuranceTab();
   if(state.activeTab==='presences') return renderPresencesTab();
   if(state.activeTab==='stats') return renderStatsTab();
@@ -747,24 +775,43 @@ function renderCotisationsTab(){
 /* ================= TAB: ASSURANCE ================= */
 function renderAssuranceTab(){
   const insured = state.data.wrestlers.filter(w=>w.assuranceReglee);
-  let rows;
-  if(insured.length===0){
-    rows = `<div class="empty-state"><div class="emoji">🛡️</div>Aucun athlète assuré pour le moment.</div>`;
-  } else {
-    rows = `<table class="data-table"><thead><tr>
-      <th>Nom</th><th>Prénom</th><th>Date de naissance</th><th>Lieu de naissance</th><th>Nom du père</th>
-    </tr></thead><tbody>
-      ${insured.map(w=>`<tr>
-        <td>${escapeHtml(w.nom)}</td><td>${escapeHtml(w.prenom)}</td>
-        <td>${fmtDate(w.dateNaissance)}</td><td>${escapeHtml(w.lieuNaissance||'—')}</td><td>${escapeHtml(w.tuteurNom||'—')}</td>
-      </tr>`).join('')}
-    </tbody></table>`;
-  }
+  const notInsured = state.data.wrestlers.filter(w=>!w.assuranceReglee);
+
+  const insuredRows = insured.length===0
+    ? `<div class="empty-state"><div class="emoji">🛡️</div>Aucun athlète assuré pour le moment.</div>`
+    : `<table class="data-table"><thead><tr>
+        <th>Nom</th><th>Prénom</th><th>Naissance</th><th>Date de paiement</th><th>Statut</th>
+      </tr></thead><tbody>
+        ${insured.map(w=>`<tr class="ins-row" data-toggle-ins="${w.id}">
+          <td>${escapeHtml(w.nom)}</td><td>${escapeHtml(w.prenom)}</td>
+          <td>${fmtDate(w.dateNaissance)}</td><td>${fmtDate(w.dateAssurance)}</td>
+          <td><span class="tag ok">Payée</span></td>
+        </tr>`).join('')}
+      </tbody></table>`;
+
+  const notInsuredRows = notInsured.length===0
+    ? `<div class="empty-state"><div class="emoji">✅</div>Tous les athlètes ont réglé leur assurance.</div>`
+    : `<table class="data-table"><thead><tr>
+        <th>Nom</th><th>Prénom</th><th>Naissance</th><th>Statut</th>
+      </tr></thead><tbody>
+        ${notInsured.map(w=>`<tr class="ins-row" data-toggle-ins="${w.id}">
+          <td>${escapeHtml(w.nom)}</td><td>${escapeHtml(w.prenom)}</td>
+          <td>${fmtDate(w.dateNaissance)}</td>
+          <td><span class="tag no">Non payée</span></td>
+        </tr>`).join('')}
+      </tbody></table>`;
+
   return `
-    <h2>Athlètes assurés</h2>
-    <div class="desc">Liste imprimable des athlètes ayant réglé leur assurance.</div>
-    <div class="toolbar"><button class="btn secondary small" id="btnPrintInsurance">🖶 Imprimer la liste</button></div>
-    ${rows}
+    <h2>Assurance</h2>
+    <div class="desc">Cliquez sur un athlète dans une liste pour basculer son statut (payée ⇄ non payée) en un clic.</div>
+
+    <h3 style="margin-top:18px;color:var(--white);">✅ Assurés (${insured.length})</h3>
+    <div class="toolbar"><button class="btn secondary small" id="btnPrintInsurance">🖶 Imprimer la liste des assurés</button></div>
+    ${insuredRows}
+
+    <h3 style="margin-top:26px;color:var(--white);">⛔ Non assurés (${notInsured.length})</h3>
+    <div class="toolbar"><button class="btn secondary small" id="btnPrintNonInsurance">🖶 Imprimer la liste des non-assurés</button></div>
+    ${notInsuredRows}
   `;
 }
 
@@ -803,6 +850,119 @@ function monthKeyFromDate(iso){
   const map = {9:'sept',10:'oct',11:'nov',12:'dec',1:'jan',2:'fev',3:'mars',4:'avr',5:'mai',6:'juin',7:'juil',8:'aout'};
   return map[m];
 }
+/* ================= TAB: RAPPELS (WhatsApp) ================= */
+function waLink(tel, text){
+  if(!tel) return null;
+  let n = String(tel).replace(/[^0-9+]/g,'');
+  if(n.startsWith('+')) n = n.slice(1);
+  if(n.startsWith('00')) n = n.slice(2);
+  if(n.startsWith('0')) n = '213' + n.slice(1);
+  if(!n.startsWith('213')) n = '213' + n;
+  if(n.length < 10) return null;
+  return 'https://wa.me/' + n + '?text=' + encodeURIComponent(text);
+}
+
+function dueDayForWrestler(w){
+  if(w.datePremiereSeance){
+    const d = parseInt(w.datePremiereSeance.slice(8,10),10);
+    if(d>=1 && d<=31) return d;
+  }
+  return null;
+}
+
+function computeReminders(){
+  const nowISO = todayISO();
+  const now = new Date();
+  const y = now.getFullYear(), m = now.getMonth()+1;
+  const daysInMonth = new Date(y, m, 0).getDate();
+  const currentMonthKey = monthKeyFromDate(nowISO);
+  const currentMonthObj = MONTHS.find(mm=>mm.key===currentMonthKey);
+
+  const dueSoon = [], dueToday = [], paidToday = [];
+  state.data.wrestlers.forEach(w=>{
+    const c = w.cotisations[currentMonthKey] || {paye:false,pause:false,date:null};
+    if(c.pause) return;
+    if(c.paye){
+      if(c.date === nowISO) paidToday.push(w);
+      return;
+    }
+    const anchor = dueDayForWrestler(w);
+    const dueDay = anchor ? Math.min(anchor, daysInMonth) : daysInMonth;
+    const daysRemaining = dueDay - now.getDate();
+    if(daysRemaining === 0) dueToday.push(w);
+    else if(daysRemaining>=1 && daysRemaining<=10){
+      dueSoon.push({...w, _daysRemaining: daysRemaining});
+    }
+  });
+  return {dueSoon, dueToday, paidToday, currentMonthObj};
+}
+
+function renderRappelsTab(){
+  const r = computeReminders();
+  const monthFr = r.currentMonthObj ? r.currentMonthObj.fr : '';
+
+  const msgDueSoon = w => `السلام عليكم، تذكير بخصوص اشتراك شهر ${monthFr} الخاص بـ ${w.prenom} ${w.nom} بنادي E.S. Bougara.\nمتبقّي ${w._daysRemaining} أيام على آخر أجل للتسديد. شكراً لتعاونكم.`;
+  const msgDueToday = w => `السلام عليكم، تذكير بخصوص اشتراك شهر ${monthFr} الخاص بـ ${w.prenom} ${w.nom} بنادي E.S. Bougara.\nاليوم هو آخر أجل للتسديد. شكراً لتعاونكم.`;
+  const msgPaidToday = w => `السلام عليكم، بخصوص اشتراك شهر ${monthFr} الخاص بـ ${w.prenom} ${w.nom} بنادي E.S. Bougara.\nنشكركم على التسديد. بالتوفيق!`;
+
+  const allEntries = {};
+  r.dueSoon.forEach(w=>{ allEntries[w.id] = {w, text: msgDueSoon(w)}; });
+  r.dueToday.forEach(w=>{ allEntries[w.id] = {w, text: msgDueToday(w)}; });
+  r.paidToday.forEach(w=>{ allEntries[w.id] = {w, text: msgPaidToday(w)}; });
+
+  const selected = state.rappelSelected.filter(id=>allEntries[id]);
+
+  function rowsFor(list, msgBuilder, emptyText, emptyEmoji){
+    if(list.length===0) return `<div class="empty-state"><div class="emoji">${emptyEmoji}</div>${emptyText}</div>`;
+    return `<table class="data-table"><thead><tr><th></th><th>Nom</th><th>Prénom</th><th>Tuteur</th><th>Téléphone</th><th></th></tr></thead><tbody>
+      ${list.map(w=>{
+        const text = msgBuilder(w);
+        const link = waLink(w.tuteurTel, text);
+        const checked = state.rappelSelected.includes(w.id);
+        return `<tr>
+          <td><input type="checkbox" class="rappel-check" data-rappel-id="${w.id}" ${checked?'checked':''}/></td>
+          <td>${escapeHtml(w.nom)}</td><td>${escapeHtml(w.prenom)}</td>
+          <td>${escapeHtml(w.tuteurNom||'—')}</td><td>${escapeHtml(w.tuteurTel||'—')}</td>
+          <td>${link ? `<a href="${link}" target="_blank" rel="noopener" class="btn secondary small">📲 WhatsApp</a>` : `<span style="color:var(--muted);font-size:12px;">Pas de téléphone</span>`}</td>
+        </tr>`;
+      }).join('')}
+    </tbody></table>`;
+  }
+
+  const queueHtml = selected.length===0 ? '' : `
+    <div class="section-label" style="margin-top:10px;">File d'envoi — ${selected.length} sélectionné(s)</div>
+    <div class="desc">Cliquez sur "WhatsApp" pour chaque personne l'une après l'autre — WhatsApp n'autorise pas l'envoi groupé automatique, mais vous n'avez plus besoin de les rechercher un par un dans la liste.</div>
+    <table class="data-table"><thead><tr><th>Nom</th><th>Prénom</th><th>Téléphone</th><th></th><th></th></tr></thead><tbody>
+      ${selected.map(id=>{
+        const {w, text} = allEntries[id];
+        const link = waLink(w.tuteurTel, text);
+        return `<tr>
+          <td>${escapeHtml(w.nom)}</td><td>${escapeHtml(w.prenom)}</td><td>${escapeHtml(w.tuteurTel||'—')}</td>
+          <td>${link ? `<a href="${link}" target="_blank" rel="noopener" class="btn small">📲 Envoyer</a>` : `<span style="color:var(--muted);font-size:12px;">Pas de téléphone</span>`}</td>
+          <td><button class="btn ghost small" data-rappel-unselect="${w.id}">✕ Retirer</button></td>
+        </tr>`;
+      }).join('')}
+    </tbody></table>
+    <button class="btn ghost small" id="btnClearRappelSelection" style="margin-top:8px;">Vider la sélection</button>
+  `;
+
+  return `
+    <h2>Rappels de cotisation</h2>
+    <div class="desc">Mois en cours : <b>${monthFr}</b>. L'échéance de chaque athlète est calculée sur le jour de sa première séance (ex : 1ère séance le 15 → échéance le 15 de chaque mois). Sans date connue, l'échéance par défaut est la fin du mois. Cochez plusieurs athlètes pour préparer une file d'envoi WhatsApp.</div>
+
+    ${queueHtml}
+
+    <h3 style="margin-top:18px;color:var(--white);">⏳ Échéance dans 10 jours ou moins (${r.dueSoon.length})</h3>
+    ${rowsFor(r.dueSoon, msgDueSoon, 'Aucun rappel à envoyer pour le moment.', '⏳')}
+
+    <h3 style="margin-top:26px;color:var(--white);">🔴 Échéance aujourd'hui (${r.dueToday.length})</h3>
+    ${rowsFor(r.dueToday, msgDueToday, "Aucun athlète concerné aujourd'hui.", '🔴')}
+
+    <h3 style="margin-top:26px;color:var(--white);">✅ Payé aujourd'hui (${r.paidToday.length})</h3>
+    ${rowsFor(r.paidToday, msgPaidToday, "Aucun paiement enregistré aujourd'hui.", '✅')}
+  `;
+}
+
 function renderStatsTab(){
   const w = state.data.wrestlers;
   const amount = state.data.settings.cotisation || 0;
@@ -892,11 +1052,13 @@ function renderReglagesTab(){
 
     ${ (state.data.archives && state.data.archives.length) ? `
     <div class="section-label" style="margin-top:30px;">Saisons archivées</div>
-    <table class="data-table"><thead><tr><th>Saison</th><th>Athlètes</th><th>Archivée le</th><th></th></tr></thead>
+    <div class="desc">Si des athlètes ont disparu de la liste principale après un archivage, ils sont ici — cliquez sur "Restaurer" pour les remettre dans la saison active.</div>
+    <table class="data-table"><thead><tr><th>Saison</th><th>Athlètes</th><th>Archivée le</th><th></th><th></th></tr></thead>
     <tbody>
       ${state.data.archives.map((a,i)=>`<tr>
         <td>${a.refYear}/${a.refYear+1}</td><td>${a.wrestlers.length}</td><td>${fmtDate(a.archivedAt)}</td>
         <td><button class="btn ghost small" data-archive-idx="${i}">Imprimer la liste</button></td>
+        <td><button class="btn secondary small" data-restore-idx="${i}">↩️ Restaurer dans la saison active</button></td>
       </tr>`).join('')}
     </tbody></table>` : '' }
   `;
@@ -1113,8 +1275,40 @@ function attachHandlers(){
   if(btnPrintRoster) btnPrintRoster.onclick = ()=> printRoster();
   const btnPrintByGroup = document.getElementById('btnPrintByGroup');
   if(btnPrintByGroup) btnPrintByGroup.onclick = ()=> printByGroup();
+  document.querySelectorAll('.rappel-check').forEach(el=>{
+    el.onchange = ()=>{
+      const id = el.dataset.rappelId;
+      const i = state.rappelSelected.indexOf(id);
+      if(el.checked && i<0) state.rappelSelected.push(id);
+      if(!el.checked && i>=0) state.rappelSelected.splice(i,1);
+      render();
+    };
+  });
+  document.querySelectorAll('[data-rappel-unselect]').forEach(el=>{
+    el.onclick = ()=>{
+      const id = el.dataset.rappelUnselect;
+      state.rappelSelected = state.rappelSelected.filter(x=>x!==id);
+      render();
+    };
+  });
+  const btnClearRappel = document.getElementById('btnClearRappelSelection');
+  if(btnClearRappel) btnClearRappel.onclick = ()=>{ state.rappelSelected = []; render(); };
+
   const btnPrintInsurance = document.getElementById('btnPrintInsurance');
   if(btnPrintInsurance) btnPrintInsurance.onclick = ()=> printInsurance();
+  const btnPrintNonInsurance = document.getElementById('btnPrintNonInsurance');
+  if(btnPrintNonInsurance) btnPrintNonInsurance.onclick = ()=> printNonInsurance();
+  document.querySelectorAll('.ins-row').forEach(el=>{
+    el.onclick = ()=>{
+      const w = state.data.wrestlers.find(x=>x.id===el.dataset.toggleIns);
+      if(!w) return;
+      w.assuranceReglee = !w.assuranceReglee;
+      w.dateAssurance = w.assuranceReglee ? todayISO() : '';
+      saveData();
+      render();
+      showToast(w.assuranceReglee ? 'Assurance marquée payée.' : 'Assurance marquée non payée.');
+    };
+  });
 
   // cotisations tab (impayés + recherche)
   const cotisSearchInput = document.getElementById('cotisSearchInput');
@@ -1220,7 +1414,8 @@ function attachHandlers(){
   const btnNewSeason = document.getElementById('btnNewSeason');
   if(btnNewSeason) btnNewSeason.onclick = ()=>{
     const cur = state.data.settings.refYear;
-    if(confirm('Archiver la saison '+cur+'/'+(cur+1)+' et démarrer une nouvelle saison vide '+(cur+1)+'/'+(cur+2)+' ?\nCette action est sans risque : rien n\'est supprimé, tout est archivé.')){
+    const sure = prompt('⚠️ ATTENTION : cette action retire immédiatement tous les athlètes et séances de la liste active de la saison '+cur+'/'+(cur+1)+' (ils seront archivés, pas supprimés, et resteront récupérables via "Restaurer").\n\nUne saison vide '+(cur+1)+'/'+(cur+2)+' sera créée.\n\nPour confirmer, tapez exactement : CONFIRMER');
+    if(sure === 'CONFIRMER'){
       state.data.archives.unshift({
         refYear: cur,
         wrestlers: state.data.wrestlers,
@@ -1232,12 +1427,32 @@ function attachHandlers(){
       state.data.settings.refYear = cur + 1;
       saveData();
       render();
-      showToast('Nouvelle saison démarrée — ancienne saison archivée.');
+      showToast('Nouvelle saison démarrée — ancienne saison archivée (récupérable).');
+    } else if(sure !== null){
+      alert('Action annulée : le texte tapé ne correspond pas à "CONFIRMER".');
     }
   };
 
   document.querySelectorAll('[data-archive-idx]').forEach(el=>{
     el.onclick = ()=> printArchiveRoster(parseInt(el.dataset.archiveIdx,10));
+  });
+
+  document.querySelectorAll('[data-restore-idx]').forEach(el=>{
+    el.onclick = ()=>{
+      const idx = parseInt(el.dataset.restoreIdx,10);
+      const a = state.data.archives[idx];
+      if(!a) return;
+      if(!confirm('Remettre les '+a.wrestlers.length+' athlètes de la saison '+a.refYear+'/'+(a.refYear+1)+' dans la liste active ? (les athlètes déjà présents ne seront pas dupliqués)')) return;
+      const existingIds = new Set(state.data.wrestlers.map(w=>w.id));
+      let added = 0;
+      a.wrestlers.forEach(w=>{
+        if(!existingIds.has(w.id)){ state.data.wrestlers.push(w); added++; }
+      });
+      state.data.archives.splice(idx,1);
+      saveData();
+      render();
+      showToast(added+' athlète(s) restauré(s) dans la saison active.');
+    };
   });
 }
 
@@ -1437,6 +1652,20 @@ function buildAndPrintCards(list){
   setTimeout(finish, 4000); // filet de sécurité si une image tarde à charger
 }
 
+function printNonInsurance(){
+  const notInsured = state.data.wrestlers.filter(w=>!w.assuranceReglee);
+  let html = `<h2>École Sportive Bougara — Athlètes non assurés</h2><table><thead><tr>
+    <th>N°</th><th>Nom</th><th>Prénom</th><th>Naissance</th><th>Lieu</th>
+  </tr></thead><tbody>`;
+  notInsured.forEach((w,i)=>{
+    html += `<tr><td>${i+1}</td><td>${escapeHtml(w.nom)}</td><td>${escapeHtml(w.prenom)}</td>
+    <td>${fmtDate(w.dateNaissance)}</td><td>${escapeHtml(w.lieuNaissance||'')}</td></tr>`;
+  });
+  html += `</tbody></table>`;
+  document.getElementById('printArea').innerHTML = html;
+  window.print();
+}
+
 function printInsurance(){
   const insured = state.data.wrestlers.filter(w=>w.assuranceReglee);
   let html = `<h2>École Sportive Bougara — Athlètes assurés</h2><table><thead><tr>
@@ -1468,6 +1697,12 @@ function printArchiveRoster(idx){
   html += `</tbody></table>`;
   document.getElementById('printArea').innerHTML = html;
   window.print();
+}
+
+if('serviceWorker' in navigator){
+  window.addEventListener('load', ()=>{
+    navigator.serviceWorker.register('/sw.js').catch(()=>{});
+  });
 }
 
 /* ================= INIT ================= */
