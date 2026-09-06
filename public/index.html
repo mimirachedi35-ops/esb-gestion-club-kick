@@ -199,6 +199,7 @@ select.filter{
 .month-cell.overdue .m-status{color:#ff8b8f;}
 .month-cell.paused .m-status{color:#e0b862;}
 .month-cell .m-date{font-size:10px;color:var(--muted);margin-top:2px;}
+.month-cell .m-date-edit{cursor:pointer;padding:0 2px;}
 
 /* ---------- STATS ---------- */
 .stat-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:14px;margin-bottom:20px;}
@@ -1184,7 +1185,7 @@ function renderCotisationsModal(){
     return `<div class="month-cell ${cls}" data-month="${m.key}">
       <div class="m-name">${m.fr}</div>
       <div class="m-status">${status}</div>
-      ${c.paye && c.date ? `<div class="m-date">${fmtDate(c.date)}</div>`:''}
+      ${c.paye && c.date ? `<div class="m-date">${fmtDate(c.date)} <span class="m-date-edit" data-edit-date="${m.key}">✏️</span></div>`:''}
     </div>`;
   }).join('');
   return `
@@ -1194,7 +1195,7 @@ function renderCotisationsModal(){
         <h2>Cotisations — ${escapeHtml(w.nom)} ${escapeHtml(w.prenom)}</h2>
         <button class="close-x" id="closeCotisModal">×</button>
       </div>
-      <div class="desc">Cliquez sur un mois pour faire défiler son statut : non payé → payé → en pause (arrêt temporaire du athlète, ne compte pas comme un retard) → non payé. Un mois passé non réglé apparaît en rouge.</div>
+      <div class="desc">Cliquez sur un mois pour faire défiler son statut : non payé → payé → en pause (arrêt temporaire du athlète, ne compte pas comme un retard) → non payé. Un mois passé non réglé apparaît en rouge. Pour un mois payé, cliquez sur ✏️ à côté de la date pour corriger la date réelle du paiement.</div>
       <div class="months-grid">${cells}</div>
     </div>
   </div>`;
@@ -1365,7 +1366,8 @@ function attachHandlers(){
   if(closeCotis) closeCotis.onclick = ()=>{ state.modal={type:'wrestler'}; render(); };
 
   document.querySelectorAll('.month-cell').forEach(el=>{
-    el.onclick = ()=>{
+    el.onclick = (ev)=>{
+      if(ev.target && ev.target.classList.contains('m-date-edit')) return;
       const mk = el.dataset.month;
       const w = state.data.wrestlers.find(x=>x.id===state.editingWrestler.id);
       const c = w.cotisations[mk];
@@ -1373,6 +1375,26 @@ function attachHandlers(){
       if(!c.paye && !c.pause){ c.paye=true; c.pause=false; c.date=todayISO(); }
       else if(c.paye){ c.paye=false; c.pause=true; c.date=null; }
       else { c.paye=false; c.pause=false; c.date=null; }
+      state.editingWrestler = w;
+      saveData();
+      render();
+    };
+  });
+
+  document.querySelectorAll('.m-date-edit').forEach(el=>{
+    el.onclick = (ev)=>{
+      ev.stopPropagation();
+      const mk = el.dataset.editDate;
+      const w = state.data.wrestlers.find(x=>x.id===state.editingWrestler.id);
+      const c = w.cotisations[mk];
+      const saisie = prompt('Date réelle du paiement (format JJ/MM/AAAA) :', c.date ? fmtDate(c.date) : '');
+      if(saisie === null) return;
+      const m = saisie.trim().match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/);
+      if(!m){ alert('Format invalide. Utilisez JJ/MM/AAAA, par exemple 04/09/2026.'); return; }
+      const [_, dd, mm, yyyy] = m;
+      const iso = `${yyyy}-${mm.padStart(2,'0')}-${dd.padStart(2,'0')}`;
+      if(isNaN(new Date(iso).getTime())){ alert('Date invalide.'); return; }
+      c.date = iso;
       state.editingWrestler = w;
       saveData();
       render();
